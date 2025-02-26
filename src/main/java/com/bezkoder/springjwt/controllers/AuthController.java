@@ -14,17 +14,20 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bezkoder.springjwt.models.ERole;
 import com.bezkoder.springjwt.models.Role;
 import com.bezkoder.springjwt.models.User;
 import com.bezkoder.springjwt.payload.request.LoginRequest;
-import com.bezkoder.springjwt.payload.request.SignupRequest;
 import com.bezkoder.springjwt.payload.response.JwtResponse;
 import com.bezkoder.springjwt.payload.response.MessageResponse;
 import com.bezkoder.springjwt.repository.RoleRepository;
@@ -73,57 +76,90 @@ public class AuthController {
   }
 
   @PostMapping("/signup")
-  public ResponseEntity<?> registerUser(@Valid @RequestBody SignupRequest signUpRequest) {
-    if (userRepository.existsByUsername(signUpRequest.getUsername())) {
+  public ResponseEntity<?> registerUser(@Valid @RequestBody User user) {
+    if (userRepository.existsByUsername(user.getUsername())) {
       return ResponseEntity
           .badRequest()
           .body(new MessageResponse("Error: Username is already taken!"));
     }
 
-    if (userRepository.existsByEmail(signUpRequest.getEmail())) {
+    if (userRepository.existsByEmail(user.getEmail())) {
       return ResponseEntity
           .badRequest()
           .body(new MessageResponse("Error: Email is already in use!"));
     }
 
     // Create new user's account
-    User user = new User(signUpRequest.getUsername(), 
-               signUpRequest.getEmail(),
-               encoder.encode(signUpRequest.getPassword()));
+    User u = new User(user.getUsername(), 
+               user.getEmail(),
+               encoder.encode(user.getPassword()));
 
-    Set<String> strRoles = signUpRequest.getRole();
-    Set<Role> roles = new HashSet<>();
 
-    if (strRoles == null) {
-      Role userRole = roleRepository.findByName(ERole.ROLE_USER)
-          .orElseThrow(() -> new RuntimeException("Error: Role is not found."));
-      roles.add(userRole);
-    } else {
-      strRoles.forEach(role -> {
-        switch (role) {
-        case "admin":
-          Role adminRole = roleRepository.findByName(ERole.ROLE_ADMIN)
-              .orElseThrow(() -> new RuntimeException("Error: Role is not found."));
-          roles.add(adminRole);
-
-          break;
-        case "mod":
-          Role modRole = roleRepository.findByName(ERole.ROLE_MODERATOR)
-              .orElseThrow(() -> new RuntimeException("Error: Role is not found."));
-          roles.add(modRole);
-
-          break;
-        default:
-          Role userRole = roleRepository.findByName(ERole.ROLE_USER)
-              .orElseThrow(() -> new RuntimeException("Error: Role is not found."));
-          roles.add(userRole);
-        }
-      });
-    }
-
-    user.setRoles(roles);
-    userRepository.save(user);
+    userRepository.save(u);
 
     return ResponseEntity.ok(new MessageResponse("User registered successfully!"));
   }
+  
+  @PostMapping("/addRole")
+  @Transactional
+  public ResponseEntity<?> addRolesToUser(@RequestParam String username, @RequestParam String role) {
+      // Find user by username
+      User user = userRepository.findByUsername(username)
+              .orElseThrow(() -> new RuntimeException("Error: User not found."));
+
+      // Convert role string to enum safely
+      ERole er;
+      try {
+          er = ERole.valueOf("ROLE_" + role.toUpperCase());
+      } catch (IllegalArgumentException e) {
+          return ResponseEntity.badRequest().body(new MessageResponse("Error: Invalid role!"));
+      }
+
+      // Find role entity
+      Role roleToAdd = roleRepository.findByName(er)
+              .orElseThrow(() -> new RuntimeException("Error: Role is not found."));
+
+      // Check if the user already has the role
+      if (user.getRoles().contains(roleToAdd)) {
+          return ResponseEntity.badRequest().body(new MessageResponse("Error: User already has the role '" + role + "'!"));
+      }
+
+      // Add the new role and save
+      user.getRoles().add(roleToAdd);
+      userRepository.save(user);
+
+      return ResponseEntity.ok(new MessageResponse("Role '" + role + "' added successfully!"));
+  }
+  
+  @DeleteMapping("/removeRole")
+  @Transactional
+  public ResponseEntity<?> removeRoleFromUser(@RequestParam String username, @RequestParam String role) {
+      // Find user by username
+      User user = userRepository.findByUsername(username)
+              .orElseThrow(() -> new RuntimeException("Error: User not found."));
+
+      // Convert role string to enum safely
+      ERole er;
+      try {
+          er = ERole.valueOf("ROLE_" + role.toUpperCase());
+      } catch (IllegalArgumentException e) {
+          return ResponseEntity.badRequest().body(new MessageResponse("Error: Invalid role!"));
+      }
+
+      // Find role entity
+      Role roleToRemove = roleRepository.findByName(er)
+              .orElseThrow(() -> new RuntimeException("Error: Role is not found."));
+
+      // Check if the user has the role before removing
+      if (!user.getRoles().contains(roleToRemove)) {
+          return ResponseEntity.badRequest().body(new MessageResponse("Error: User does not have the role '" + role + "'!"));
+      }
+
+      // Remove the role and save the user
+      user.getRoles().remove(roleToRemove);
+      userRepository.save(user);
+
+      return ResponseEntity.ok(new MessageResponse("Role '" + role + "' removed successfully!"));
+  }
+
 }
